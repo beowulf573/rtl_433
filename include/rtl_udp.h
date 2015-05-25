@@ -19,9 +19,18 @@
 #define RTL_UDP_HUMIDITY	0x10
 #define RTL_UDP_RAIN		0x20
 
-int udp_callback(int fields, float temperature, int window_speed, float wind_direction, int humidity, int rainfall_counter);
+struct rtl_udp_data {
+	int fields;
+	float temperature;
+	int window_speed;
+	float wind_direction;
+	int humidity;
+	int rainfall_counter;
+};
 
-int udp_init_socket();
-int udp_destroy_socket();
+int udp_callback(const struct *rtl_udp_data);
+
+int udp_init_socket(void);
+int udp_destroy_socket(void);
 
 #endif // _RTL_UDP_H
