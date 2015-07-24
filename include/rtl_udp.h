@@ -28,8 +28,7 @@ struct rtl_udp_data {
 	int rainfall_counter;
 };
 
-int udp_callback(const struct *rtl_udp_data);
-
+int udp_callback(const struct rtl_udp_data *data);
 int udp_init_socket(void);
 int udp_destroy_socket(void);
 
