@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include "rtl_433.h"
 #include "rtl_udp.h"
 
 static int rtl_socket = -1;
@@ -58,7 +59,9 @@ int udp_callback(const struct rtl_udp_data *data)
 	strncat(buf, "}", cnt);
 	cnt -= (strlen("}") + 1);
 	
-	fprintf(stdout, "%s\n", buf);
+	if(debug_output) {
+		fprintf(stdout, "%s\n", buf);
+	}
 	int ret = sendto(rtl_socket, buf, strlen(buf) + 1, 0, (struct sockaddr*)&rtl_broadcastAddr, sizeof rtl_broadcastAddr);
     if (ret < 0) {
     	perror("sendto failed");
@@ -66,9 +69,11 @@ int udp_callback(const struct rtl_udp_data *data)
         rtl_socket = -1;
         return 0;        
     }
-    printf("sent %d bytes to %s\n", ret,
-        inet_ntoa(rtl_broadcastAddr.sin_addr));
-  
+
+    if(debug_output) {
+	    printf("sent %d bytes to %s\n", ret,
+    	    inet_ntoa(rtl_broadcastAddr.sin_addr));
+  	}
 	return 1;
 }
 
