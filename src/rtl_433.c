@@ -22,6 +22,7 @@
 
 #include "rtl-sdr.h"
 #include "rtl_433.h"
+#include "rtl_udp.h"
 
 static int do_exit = 0;
 static int do_exit_async = 0, frequencies = 0, events = 0;
@@ -986,6 +987,7 @@ int main(int argc, char **argv) {
     int device_count;
     char vendor[256], product[256], serial[256];
     int have_opt_R = 0;
+    int udp_port = 0;
 
     demod = malloc(sizeof (struct dm_state));
     memset(demod, 0, sizeof (struct dm_state));
@@ -1006,7 +1008,7 @@ int main(int argc, char **argv) {
     demod->level_limit = DEFAULT_LEVEL_LIMIT;
 
 
-    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:")) != -1) {
+    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:u:")) != -1) {
         switch (opt) {
             case 'd':
                 dev_index = atoi(optarg);
@@ -1076,6 +1078,9 @@ int main(int argc, char **argv) {
 
                 devices[i - 1].disabled = 0;
                 break;
+            case 'u':
+                udp_port = atoi(optarg);
+                break;
             default:
                 usage(devices);
                 break;
@@ -1114,6 +1119,10 @@ int main(int argc, char **argv) {
             exit(1);
     }
 
+    if(udp_port > 0) {
+        udp_init_socket(udp_port);
+    }
+    
     fprintf(stderr, "Found %d device(s):\n", device_count);
     for (i = 0; i < device_count; i++) {
         rtlsdr_get_device_usb_strings(i, vendor, product, serial);
@@ -1289,6 +1298,7 @@ int main(int argc, char **argv) {
 
     rtlsdr_close(dev);
     free(buffer);
+    udp_destroy_socket();
 out:
     return r >= 0 ? r : -r;
 }

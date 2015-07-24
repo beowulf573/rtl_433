@@ -50,13 +50,14 @@ int udp_callback(const struct rtl_udp_data *data)
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
-	snprintf(field, 128, "udp_rtl: %s,", VERSION_STR);
+	snprintf(field, 128, "udp_rtl: %s", VERSION_STR);
 	strncat(buf, field, cnt);
 	cnt -= (strlen(buf) + 1);
 	
-	strncpy(buf, "}", cnt);
+	strncat(buf, "}", cnt);
 	cnt -= (strlen("}") + 1);
 	
+	fprintf(stdout, "%s\n", buf);
 	int ret = sendto(rtl_socket, buf, strlen(buf) + 1, 0, (struct sockaddr*)&rtl_broadcastAddr, sizeof rtl_broadcastAddr);
     if (ret < 0) {
         close(rtl_socket);
@@ -70,6 +71,7 @@ int udp_callback(const struct rtl_udp_data *data)
 int udp_init_socket(int port)
 {
 	if(rtl_socket != -1) {
+		perror("socket already exists");
 		return 0;
 	}
 
@@ -92,7 +94,7 @@ int udp_init_socket(int port)
     rtl_broadcastAddr.sin_family = AF_INET;
     inet_pton(AF_INET, "239.255.255.255", &rtl_broadcastAddr.sin_addr);
     rtl_broadcastAddr.sin_port = htons(port); 
-	
+	fprintf(stdout, "udp broadcasting on %d\n", port);
 	return 1;
 }
 

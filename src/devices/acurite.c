@@ -1,4 +1,5 @@
 #include "rtl_433.h"
+#include "rtl_udp.h"
 
 // ** Acurite 5n1 functions **
 
@@ -77,6 +78,8 @@ static int acurite5n1_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS],int16_t bits
     // Jens Jensen 2014
     int i;
     uint8_t *buf = NULL;
+    struct rtl_udp_data udp_data;
+
     // run through rows til we find one with good crc (brute force)
     for (i=0; i < BITBUF_ROWS; i++) {
         if (acurite_detect(bb[i])) {
@@ -84,6 +87,8 @@ static int acurite5n1_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS],int16_t bits
             break; // done
         }
     }
+    
+    udp_data.fields = 0x00;
 
     if (buf) {
         // decode packet here
@@ -107,24 +112,40 @@ static int acurite5n1_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS],int16_t bits
                 acurite_raincounter = raincounter;
             }
 
-            fprintf(stdout, "wind speed: %d kph, ",
-                acurite_getWindSpeed(buf[3], buf[4]));
-            fprintf(stdout, "wind direction: %0.1f°, ",
-                acurite_getWindDirection(buf[4]));
+            int wind_speed = acurite_getWindSpeed(buf[3], buf[4]);
+            fprintf(stdout, "wind speed: %d kph, ", wind_speed);
+            float wind_direction = acurite_getWindDirection(buf[4]);
+            fprintf(stdout, "wind direction: %0.1f°, ", wind_direction);
             fprintf(stdout, "rain gauge: %0.2f in.\n", rainfall);
+
+
+            udp_data.fields = RTL_UDP_WIND_SPEED | RTL_UDP_WIND_DIR | RTL_UDP_RAIN;
+            udp_data.wind_speed = wind_speed;
+            udp_data.wind_direction = wind_direction;
+            udp_data.rainfall_counter = raincounter;
 
         } else if ((buf[2] & 0x0F) == 8) {
             // wind speed, temp, RH
-            fprintf(stdout, "wind speed: %d kph, ",
-                acurite_getWindSpeed(buf[3], buf[4]));
-            fprintf(stdout, "temp: %2.1f° F, ",
-                acurite_getTemp(buf[4], buf[5]));
-            fprintf(stdout, "humidity: %d%% RH\n",
-                acurite_getHumidity(buf[6]));
+            int wind_speed = acurite_getWindSpeed(buf[3], buf[4]);
+            fprintf(stdout, "wind speed: %d kph, ", wind_speed);
+            float temperature = acurite_getTemp(buf[4], buf[5]);
+            fprintf(stdout, "temp: %2.1f° F, ", temperature);
+            int humidity = acurite_getHumidity(buf[6]);
+            fprintf(stdout, "humidity: %d%% RH\n", humidity);
+
+            udp_data.fields = RTL_UDP_WIND_SPEED | RTL_UDP_TEMP | RTL_UDP_HUMIDITY;
+            udp_data.wind_speed = wind_speed;
+            udp_data.temperature = temperature;
+            udp_data.humidity = humidity;
+        }
+
+        if(udp_data.fields != 0x00) {
+            udp_callback(&udp_data);
         }
     } else {
     	return 0;
     }
+
 
     if (debug_output)
     	debug_callback(bb, bits_per_row);
