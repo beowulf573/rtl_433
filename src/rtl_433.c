@@ -988,6 +988,7 @@ int main(int argc, char **argv) {
     char vendor[256], product[256], serial[256];
     int have_opt_R = 0;
     int udp_port = 0;
+    char udp_addr[256] = { '\0' };
 
     demod = malloc(sizeof (struct dm_state));
     memset(demod, 0, sizeof (struct dm_state));
@@ -1008,7 +1009,7 @@ int main(int argc, char **argv) {
     demod->level_limit = DEFAULT_LEVEL_LIMIT;
 
 
-    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:u:")) != -1) {
+    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:u:A:")) != -1) {
         switch (opt) {
             case 'd':
                 dev_index = atoi(optarg);
@@ -1078,6 +1079,9 @@ int main(int argc, char **argv) {
 
                 devices[i - 1].disabled = 0;
                 break;
+            case 'A':
+                strncpy(udp_addr, optarg, 256);
+                break;
             case 'u':
                 udp_port = atoi(optarg);
                 break;
@@ -1119,8 +1123,8 @@ int main(int argc, char **argv) {
             exit(1);
     }
 
-    if(udp_port > 0) {
-        udp_init_socket(udp_port);
+    if(udp_port > 0 && strlen(udp_addr) > 0) {
+        udp_init_socket(udp_addr, udp_port);
     }
     
     fprintf(stderr, "Found %d device(s):\n", device_count);

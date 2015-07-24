@@ -29,7 +29,7 @@ struct rtl_udp_data {
 };
 
 int udp_callback(const struct rtl_udp_data *data);
-int udp_init_socket(int port);
+int udp_init_socket(const char *addr, int port);
 int udp_destroy_socket(void);
 
 #endif // _RTL_UDP_H

@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include "rtl_udp.h"
 
 static int rtl_socket = -1;
@@ -60,15 +61,18 @@ int udp_callback(const struct rtl_udp_data *data)
 	fprintf(stdout, "%s\n", buf);
 	int ret = sendto(rtl_socket, buf, strlen(buf) + 1, 0, (struct sockaddr*)&rtl_broadcastAddr, sizeof rtl_broadcastAddr);
     if (ret < 0) {
+    	perror("sendto failed");
         close(rtl_socket);
         rtl_socket = -1;
         return 0;        
     }
+    printf("sent %d bytes to %s\n", ret,
+        inet_ntoa(rtl_broadcastAddr.sin_addr));
   
 	return 1;
 }
 
-int udp_init_socket(int port)
+int udp_init_socket(const char *addr, int port)
 {
 	if(rtl_socket != -1) {
 		perror("socket already exists");
@@ -89,11 +93,15 @@ int udp_init_socket(int port)
         rtl_socket = -1;
         return 0;
     }
-    
+    struct hostent *he = gethostbyname(addr);
     memset(&rtl_broadcastAddr, 0, sizeof rtl_broadcastAddr);
     rtl_broadcastAddr.sin_family = AF_INET;
-    inet_pton(AF_INET, "239.255.255.255", &rtl_broadcastAddr.sin_addr);
+	rtl_broadcastAddr.sin_addr = *((struct in_addr *)he->h_addr);
+    
+    memset(rtl_broadcastAddr.sin_zero, '\0', sizeof rtl_broadcastAddr.sin_zero);
+    
     rtl_broadcastAddr.sin_port = htons(port); 
+
 	fprintf(stdout, "udp broadcasting on %d\n", port);
 	return 1;
 }
