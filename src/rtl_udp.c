@@ -28,7 +28,7 @@ int udp_callback(const struct rtl_udp_data *data)
 	cnt -= (strlen("{") + 1);
 
 	if(data->fields & RTL_UDP_TEMP) {
-		snprintf(field, 128, "temp: %3.2f,", data->temperature);
+		snprintf(field, 128, "temperature: %3.2f,", data->temperature);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
