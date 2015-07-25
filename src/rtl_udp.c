@@ -28,31 +28,31 @@ int udp_callback(const struct rtl_udp_data *data)
 	cnt -= (strlen("{") + 1);
 
 	if(data->fields & RTL_UDP_TEMP) {
-		snprintf(field, 128, "temperature: %3.2f,", data->temperature);
+		snprintf(field, 128, "\"temperature\": %3.2f,", data->temperature);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
 	if(data->fields & RTL_UDP_WIND_SPEED) {
-		snprintf(field, 128, "wind_speed: %d,", data->wind_speed);
+		snprintf(field, 128, "\"wind_speed\": %d,", data->wind_speed);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
 	if(data->fields & RTL_UDP_WIND_DIR) {
-		snprintf(field, 128, "wind_dir: %3.2f,", data->wind_direction);
+		snprintf(field, 128, "\"wind_dir\": %3.2f,", data->wind_direction);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
 	if(data->fields & RTL_UDP_HUMIDITY) {
-		snprintf(field, 128, "humidity: %d,", data->humidity);
+		snprintf(field, 128, "\"humidity\": %d,", data->humidity);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
 	if(data->fields & RTL_UDP_RAIN) {
-		snprintf(field, 128, "rain: %d,", data->rainfall_counter);
+		snprintf(field, 128, "\"rain\": %d,", data->rainfall_counter);
 		strncat(buf, field, cnt);
 		cnt -= (strlen(buf) + 1);
 	}
-	snprintf(field, 128, "udp_rtl: %s", VERSION_STR);
+	snprintf(field, 128, "\"udp_rtl\": %s", VERSION_STR);
 	strncat(buf, field, cnt);
 	cnt -= (strlen(buf) + 1);
 	
@@ -62,7 +62,7 @@ int udp_callback(const struct rtl_udp_data *data)
 	if(debug_output) {
 		fprintf(stdout, "%s\n", buf);
 	}
-	int ret = sendto(rtl_socket, buf, strlen(buf) + 1, 0, (struct sockaddr*)&rtl_broadcastAddr, sizeof rtl_broadcastAddr);
+	int ret = sendto(rtl_socket, buf, strlen(buf), 0, (struct sockaddr*)&rtl_broadcastAddr, sizeof rtl_broadcastAddr);
     if (ret < 0) {
     	perror("sendto failed");
         close(rtl_socket);
