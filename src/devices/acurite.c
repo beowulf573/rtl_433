@@ -122,7 +122,7 @@ static int acurite5n1_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS],int16_t bits
             udp_data.fields = RTL_UDP_WIND_SPEED | RTL_UDP_WIND_DIR | RTL_UDP_RAIN;
             udp_data.wind_speed = wind_speed;
             udp_data.wind_direction = wind_direction;
-            udp_data.rainfall_counter = raincounter;
+            udp_data.rainfall_counter = acurite_raincounter;
 
         } else if ((buf[2] & 0x0F) == 8) {
             // wind speed, temp, RH
