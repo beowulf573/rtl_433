@@ -27,31 +27,10 @@
  * (at your option) any later version.
  */
 #include "rtl_433.h"
+#include "util.h"
 
-
-// Generic CRC-8
-// (Should probably be moved to somewhere common)
-// polynomial byte is from x^7 to x^0 (x^8 is implicitly one)
-uint8_t crc8(uint8_t const message[], unsigned nBytes, uint8_t polynomial) {
-    uint8_t remainder = 0;	
-    unsigned byte, bit;
-
-    for (byte = 0; byte < nBytes; ++byte) {
-        remainder ^= message[byte];
-        for (bit = 0; bit < 8; ++bit) {
-            if (remainder & 0x80) {
-                remainder = (remainder << 1) ^ polynomial;
-            }
-            else {
-                remainder = (remainder << 1);
-            }
-        }
-    }
-    return remainder;
-}
-
-
-static int fineoffset_WH2_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS], int16_t bits_per_row[BITBUF_ROWS]) {
+static int fineoffset_WH2_callback(bitbuffer_t *bitbuffer) {
+    bitrow_t *bb = bitbuffer->bb;
     uint8_t ID;
     float temperature;
     float humidity;
@@ -59,12 +38,12 @@ static int fineoffset_WH2_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS], int16_t
     const uint8_t polynomial = 0x31;    // x8 + x5 + x4 + 1 (x8 is implicit)
 
     // Validate package
-    if (bits_per_row[0] >= 48 &&        // Dont waste time on a short package
+    if (bitbuffer->bits_per_row[0] >= 48 &&         // Dont waste time on a short package
         bb[0][0] == 0xFF &&             // Preamble
-	    bb[0][5] == crc8(&bb[0][1], 4, polynomial)	// CRC (excluding preamble)
-	) 
+        bb[0][5] == crc8(&bb[0][1], 4, polynomial)	// CRC (excluding preamble)
+    ) 
     {
-	    // Nibble 3,4 contains ID
+         // Nibble 3,4 contains ID
         ID = ((bb[0][1]&0x0F) << 4) | ((bb[0][2]&0xF0) >> 4);
 
         // Nible 5,6,7 contains 12 bits of temperature
@@ -85,10 +64,6 @@ static int fineoffset_WH2_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS], int16_t
         fprintf(stdout, "ID          = 0x%2X\n", ID);
         fprintf(stdout, "temperature = %.1f C\n", temperature);
         fprintf(stdout, "humidity    = %2.0f %%\n", humidity);
-        // fprintf(stdout, "raw         = %02x %02x %02x %02x %02x %02x\n",bb[0][0],bb[0][1],bb[0][2],bb[0][3],bb[0][4],bb[0][5]);
-
-        if (debug_output)
-            debug_callback(bb, bits_per_row);
 
         return 1;
     }
@@ -97,13 +72,14 @@ static int fineoffset_WH2_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS], int16_t
 
 
 r_device fineoffset_WH2 = {
-    /* .id             = */ 12,
-    /* .name           = */ "Fine Offset Electronics, WH-2 Sensor",
-    /* .modulation     = */ OOK_PWM_RAW,
-    /* .short_limit    = */ 200,	// Short pulse 136, long pulse 381, fixed gap 259
-    /* .long_limit     = */ 700,	// Maximum pulse period (long pulse + fixed gap)
-    /* .reset_limit    = */ 700,	// We just want 1 package
-    /* .json_callback  = */ &fineoffset_WH2_callback,
+    .name           = "Fine Offset Electronics, WH-2 Sensor",
+    .modulation     = OOK_PULSE_PWM_RAW,
+    .short_limit    = 200,	// Short pulse 136, long pulse 381, fixed gap 259
+    .long_limit     = 700,	// Maximum pulse period (long pulse + fixed gap)
+    .reset_limit    = 700,	// We just want 1 package
+    .json_callback  = &fineoffset_WH2_callback,
+    .disabled       = 0,
+    .demod_arg      = 0,
 };
 
 

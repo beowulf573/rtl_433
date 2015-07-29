@@ -23,6 +23,9 @@
 #include "rtl-sdr.h"
 #include "rtl_433.h"
 #include "rtl_udp.h"
+#include "pulse_detect.h"
+#include "pulse_demod.h"
+
 
 static int do_exit = 0;
 static int do_exit_async = 0, frequencies = 0, events = 0;
@@ -38,92 +41,6 @@ static int override_long = 0;
 int debug_output = 0;
 
 int num_r_devices = 0;
-
-int debug_callback(uint8_t bb[BITBUF_ROWS][BITBUF_COLS], int16_t bits_per_row[BITBUF_ROWS]) {
-    int i,j,k;
-    int rows_used[BITBUF_ROWS];
-    int col_max = 0;
-    int row_cnt = 0;
-
-    // determine what part of bb[][] has non-zero data to avoid
-    // outputting lots of empty rows
-    for (i=0 ; i<BITBUF_ROWS ; i++) {
-	for (j=BITBUF_COLS - 1 ; j > 0 ; j--) {
-	    if (bb[i][j] != 0)
-		break;
-	}
-	if (j != 0) {
-	    rows_used[i] = 1;
-	    row_cnt++;
-	    if (j > col_max)
-		col_max = j;
-	} else {
-	    rows_used[i] = 0;
-	}
-    }
-
-    if (!row_cnt) {
-	fprintf(stderr, "debug_callback: empty data array\n");
-	return 0;
-    }
-
-    fprintf(stderr, "\n");
-    for (i=0 ; i<BITBUF_ROWS ; i++) {
-	if (!rows_used[i]) {
-	    continue;
-	}
-
-        fprintf(stderr, "[%02d] ",i);
-        for (j=0 ; j<=col_max ; j++) {
-            fprintf(stderr, "%02x ", bb[i][j]);
-        }
-        fprintf(stderr, ": ");
-        for (j=0 ; j<=col_max ; j++) {
-            for (k=7 ; k>=0 ; k--) {
-                if (bb[i][j] & 1<<k)
-                    fprintf(stderr, "1");
-                else
-                    fprintf(stderr, "0");
-            }
-            fprintf(stderr, " ");
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "\n");
-
-    return 0;
-}
-
-struct protocol_state {
-    int (*callback)(uint8_t bits_buffer[BITBUF_ROWS][BITBUF_COLS], int16_t bits_per_row[BITBUF_ROWS]);
-
-    /* bits state */
-    int bits_col_idx;
-    int bits_row_idx;
-    int bits_bit_col_idx;
-    uint8_t bits_buffer[BITBUF_ROWS][BITBUF_COLS];
-    int16_t bits_per_row[BITBUF_ROWS];
-    int bit_rows;
-    unsigned int modulation;
-
-    /* demod state */
-    int pulse_length;
-    int pulse_count;
-    int pulse_distance;
-    int sample_counter;
-    int start_c;
-
-    int packet_present;
-    int pulse_start;
-    int real_bits;
-    int start_bit;
-    /* pwm limits */
-    int short_limit;
-    int long_limit;
-    int reset_limit;
-
-
-};
 
 struct dm_state {
     FILE *file;
@@ -146,6 +63,7 @@ struct dm_state {
     int r_dev_num;
     struct protocol_state *r_devs[MAX_PROTOCOLS];
 
+	pulse_data_t	pulse_data;
 };
 
 void usage(r_device *devices) {
@@ -227,67 +145,6 @@ static void envelope_detect(unsigned char *buf, uint32_t len, int decimate) {
     }
 }
 
-static void demod_reset_bits_packet(struct protocol_state* p) {
-    memset(p->bits_buffer, 0, BITBUF_ROWS * BITBUF_COLS);
-    memset(p->bits_per_row, 0, BITBUF_ROWS);
-    p->bits_col_idx = 0;
-    p->bits_bit_col_idx = 7;
-    p->bits_row_idx = 0;
-    p->bit_rows = 0;
-}
-
-static void demod_add_bit(struct protocol_state* p, int bit) {
-    p->bits_buffer[p->bits_row_idx][p->bits_col_idx] |= bit << p->bits_bit_col_idx;
-    p->bits_bit_col_idx--;
-    if (p->bits_bit_col_idx < 0) {
-        p->bits_bit_col_idx = 7;
-        p->bits_col_idx++;
-        if (p->bits_col_idx > BITBUF_COLS - 1) {
-            p->bits_col_idx = BITBUF_COLS - 1;
-            //            fprintf(stderr, "p->bits_col_idx>%i!\n", BITBUF_COLS-1);
-        }
-    }
-    p->bits_per_row[p->bit_rows]++;
-}
-
-static void demod_next_bits_packet(struct protocol_state* p) {
-    p->bits_col_idx = 0;
-    p->bits_row_idx++;
-    p->bits_bit_col_idx = 7;
-    if (p->bits_row_idx > BITBUF_ROWS - 1) {
-        p->bits_row_idx = BITBUF_ROWS - 1;
-        //fprintf(stderr, "p->bits_row_idx>%i!\n", BITBUF_ROWS-1);
-    }
-    p->bit_rows++;
-    if (p->bit_rows > BITBUF_ROWS - 1)
-        p->bit_rows -= 1;
-}
-
-static void demod_print_bits_packet(struct protocol_state* p) {
-    int i, j, k;
-
-    fprintf(stderr, "\n");
-    for (i = 0; i < p->bit_rows + 1; i++) {
-        fprintf(stderr, "[%02d] {%d} ", i, p->bits_per_row[i]);
-        for (j = 0; j < ((p->bits_per_row[i] + 8) / 8); j++) {
-            fprintf(stderr, "%02x ", p->bits_buffer[i][j]);
-        }
-        fprintf(stderr, ": ");
-        for (j = 0; j < ((p->bits_per_row[i] + 8) / 8); j++) {
-            for (k = 7; k >= 0; k--) {
-                if (p->bits_buffer[i][j] & 1 << k)
-                    fprintf(stderr, "1");
-                else
-                    fprintf(stderr, "0");
-            }
-            //            fprintf(stderr, "=0x%x ",demod->bits_buffer[i][j]);
-            fprintf(stderr, " ");
-        }
-        fprintf(stderr, "\n");
-    }
-    fprintf(stderr, "\n");
-    return;
-}
 
 static void register_protocol(struct dm_state *demod, r_device *t_dev) {
     struct protocol_state *p = calloc(1, sizeof (struct protocol_state));
@@ -296,7 +153,9 @@ static void register_protocol(struct dm_state *demod, r_device *t_dev) {
     p->reset_limit = (float) t_dev->reset_limit / ((float) DEFAULT_SAMPLE_RATE / (float) samp_rate);
     p->modulation = t_dev->modulation;
     p->callback = t_dev->json_callback;
-    demod_reset_bits_packet(p);
+    p->name = t_dev->name;
+    p->demod_arg = t_dev->demod_arg;
+    bitbuffer_clear(&p->bits);
 
     demod->r_devs[demod->r_dev_num] = p;
     demod->r_dev_num++;
@@ -492,45 +351,45 @@ static void classify_signal() {
     fprintf(stderr, "\nShort distance: %d, long distance: %d, packet distance: %d\n", a[0], a[1], a[2]);
     fprintf(stderr, "\np_limit: %d\n", p_limit);
 
-    demod_reset_bits_packet(&p);
+    bitbuffer_clear(&p.bits);
     if (signal_type == 1) {
         for (i = 0; i < 1000; i++) {
             if (signal_distance_data[i] > 0) {
                 if (signal_distance_data[i] < (a[0] + a[1]) / 2) {
                     //                     fprintf(stderr, "0 [%d] %d < %d\n",i, signal_distance_data[i], (a[0]+a[1])/2);
-                    demod_add_bit(&p, 0);
+                    bitbuffer_add_bit(&p.bits, 0);
                 } else if ((signal_distance_data[i] > (a[0] + a[1]) / 2) && (signal_distance_data[i] < (a[1] + a[2]) / 2)) {
                     //                     fprintf(stderr, "0 [%d] %d > %d\n",i, signal_distance_data[i], (a[0]+a[1])/2);
-                    demod_add_bit(&p, 1);
+                    bitbuffer_add_bit(&p.bits, 1);
                 } else if (signal_distance_data[i] > (a[1] + a[2]) / 2) {
                     //                     fprintf(stderr, "0 [%d] %d > %d\n",i, signal_distance_data[i], (a[1]+a[2])/2);
-                    demod_next_bits_packet(&p);
+                    bitbuffer_add_row(&p.bits);
                 }
 
             }
 
         }
-        demod_print_bits_packet(&p);
+        bitbuffer_print(&p.bits);
     }
     if (signal_type == 2) {
         for (i = 0; i < 1000; i++) {
             if (signal_pulse_data[i][2] > 0) {
                 if (signal_pulse_data[i][2] < p_limit) {
                     //                     fprintf(stderr, "0 [%d] %d < %d\n",i, signal_pulse_data[i][2], p_limit);
-                    demod_add_bit(&p, 0);
+                    bitbuffer_add_bit(&p.bits, 0);
                 } else {
                     //                     fprintf(stderr, "1 [%d] %d > %d\n",i, signal_pulse_data[i][2], p_limit);
-                    demod_add_bit(&p, 1);
+                    bitbuffer_add_bit(&p.bits, 1);
                 }
                 if ((signal_distance_data[i] >= (a[1] + a[2]) / 2)) {
                     //                     fprintf(stderr, "\\n [%d] %d > %d\n",i, signal_distance_data[i], (a[1]+a[2])/2);
-                    demod_next_bits_packet(&p);
+                    bitbuffer_add_row(&p.bits);
                 }
 
 
             }
         }
-        demod_print_bits_packet(&p);
+        bitbuffer_print(&p.bits);
     }
 
     for (i = 0; i < 1000; i++) {
@@ -649,6 +508,7 @@ err:
 
 static void pwm_d_decode(struct dm_state *demod, struct protocol_state* p, int16_t *buf, uint32_t len) {
     unsigned int i;
+    int newevents;
 
     for (i = 0; i < len; i++) {
         if (buf[i] > demod->level_limit) {
@@ -664,11 +524,11 @@ static void pwm_d_decode(struct dm_state *demod, struct protocol_state* p, int16
         if (p->start_c) p->sample_counter++;
         if (p->pulse_distance && (buf[i] > demod->level_limit)) {
             if (p->sample_counter < p->short_limit) {
-                demod_add_bit(p, 0);
+                bitbuffer_add_bit(&p->bits, 0);
             } else if (p->sample_counter < p->long_limit) {
-                demod_add_bit(p, 1);
+                bitbuffer_add_bit(&p->bits, 1);
             } else {
-                demod_next_bits_packet(p);
+                bitbuffer_add_row(&p->bits);
                 p->pulse_count = 0;
                 p->sample_counter = 0;
             }
@@ -679,11 +539,14 @@ static void pwm_d_decode(struct dm_state *demod, struct protocol_state* p, int16
             p->sample_counter = 0;
             p->pulse_distance = 0;
             if (p->callback)
-                events += p->callback(p->bits_buffer, p->bits_per_row);
-            else
-                demod_print_bits_packet(p);
-
-            demod_reset_bits_packet(p);
+                newevents = p->callback(&p->bits);
+            // Debug printout
+            if(!p->callback || (debug_output && newevents > 0)) {
+                fprintf(stderr, "pwm_d_decode(): %s \n", p->name);
+                bitbuffer_print(&p->bits);
+            }
+            events += newevents;
+            bitbuffer_clear(&p->bits);
         }
     }
 }
@@ -692,6 +555,7 @@ static void pwm_d_decode(struct dm_state *demod, struct protocol_state* p, int16
 
 static void pwm_p_decode(struct dm_state *demod, struct protocol_state* p, int16_t *buf, uint32_t len) {
     unsigned int i;
+    int newevents;
 
     for (i = 0; i < len; i++) {
         if (buf[i] > demod->level_limit && !p->start_bit) {
@@ -726,16 +590,16 @@ static void pwm_p_decode(struct dm_state *demod, struct protocol_state* p, int16
             //           fprintf(stderr, "space duration %d\n", p->sample_counter);
 
             if (p->pulse_length <= p->short_limit) {
-                demod_add_bit(p, 1);
+                bitbuffer_add_bit(&p->bits, 1);
             } else if (p->pulse_length > p->short_limit) {
-                demod_add_bit(p, 0);
+                bitbuffer_add_bit(&p->bits, 0);
             }
             p->sample_counter = 0;
             p->pulse_start = 0;
         }
 
         if (p->real_bits && p->sample_counter > p->long_limit) {
-            demod_next_bits_packet(p);
+            bitbuffer_add_row(&p->bits);
 
             p->start_bit = 0;
             p->real_bits = 0;
@@ -744,114 +608,18 @@ static void pwm_p_decode(struct dm_state *demod, struct protocol_state* p, int16
         if (p->sample_counter > p->reset_limit) {
             p->start_c = 0;
             p->sample_counter = 0;
-            //demod_print_bits_packet(p);
             if (p->callback)
-                events += p->callback(p->bits_buffer, p->bits_per_row);
-            else
-                demod_print_bits_packet(p);
-            demod_reset_bits_packet(p);
+                newevents = p->callback(&p->bits);
+            // Debug printout
+            if(!p->callback || (debug_output && newevents > 0)) {
+                fprintf(stderr, "pwm_p_decode(): %s \n", p->name);
+                bitbuffer_print(&p->bits);
+            }
+            events += newevents;
+            bitbuffer_clear(&p->bits);
 
             p->start_bit = 0;
             p->real_bits = 0;
-        }
-    }
-}
-
-/*  Machester Decode for Oregon Scientific Weather Sensors
-   Decode data streams sent by Oregon Scientific v2.1, and v3 weather sensors.
-   With manchester encoding, both the pulse width and pulse distance vary.  Clock sync
-   is recovered from the data stream based on pulse widths and distances exceeding a
-   minimum threashold (short limit* 1.5).
- */
-static void manchester_decode(struct dm_state *demod, struct protocol_state* p, int16_t *buf, uint32_t len) {
-    unsigned int i;
-
-	if (p->sample_counter == 0)
-	    p->sample_counter = p->short_limit*2;
-
-    for (i=0 ; i<len ; i++) {
-
-	    if (p->start_c)
-		    p->sample_counter++; /* For this decode type, sample counter is count since last data bit recorded */
-
-        if (!p->pulse_count && (buf[i] > demod->level_limit)) { /* Pulse start (rising edge) */
-            p->pulse_count = 1;
-			if (p->sample_counter  > (p->short_limit + (p->short_limit>>1))) {
-			   /* Last bit was recorded more than short_limit*1.5 samples ago */
-			   /* so this pulse start must be a data edge (rising data edge means bit = 0) */
-               demod_add_bit(p, 0);
-			   p->sample_counter=1;
-			   p->start_c++; // start_c counts number of bits received
-			}
-        }
-        if (p->pulse_count && (buf[i] <= demod->level_limit)) { /* Pulse end (falling edge) */
-		    if (p->sample_counter > (p->short_limit + (p->short_limit>>1))) {
-		       /* Last bit was recorded more than "short_limit*1.5" samples ago */
-			   /* so this pulse end is a data edge (falling data edge means bit = 1) */
-               demod_add_bit(p, 1);
-			   p->sample_counter=1;
-			   p->start_c++;
-			}
-            p->pulse_count = 0;
-        }
-
-        if (p->sample_counter > p->reset_limit) {
-	//fprintf(stderr, "manchester_decode number of bits received=%d\n",p->start_c);
-		   if (p->callback)
-              events+=p->callback(p->bits_buffer, p->bits_per_row);
-           else
-              demod_print_bits_packet(p);
-			demod_reset_bits_packet(p);
-	        p->sample_counter = p->short_limit*2;
-			p->start_c = 0;
-        }
-    }
-}
-
-
-/* Pulse Width Modulation. No startbit removal */
-static void pwm_raw_decode(struct dm_state *demod, struct protocol_state* p, int16_t *buf, uint32_t len) {
-    unsigned int i;
-    for (i = 0; i < len; i++) {
-        if (p->start_c) p->sample_counter++;
-
-        // Detect Pulse Start (leading edge)
-        if (!p->pulse_start && (buf[i] > demod->level_limit)) {
-            p->pulse_start    = 1;
-            p->sample_counter = 0;
-            // Check for first bit in sequence
-            if(!p->start_c) {
-                p->start_c = 1;
-            }
-        }
-
-        // Detect Pulse End (trailing edge)
-        if (p->pulse_start && (buf[i] < demod->level_limit)) {
-            p->pulse_start      = 0;
-            if (p->sample_counter <= p->short_limit) {
-                demod_add_bit(p, 1);
-            } else {
-                demod_add_bit(p, 0);
-            }
-        }
-
-        // Detect Pulse period overrun
-        if (p->sample_counter == p->long_limit) {
-                demod_next_bits_packet(p);
-        }
-
-        // Detect Pulse exceeding reset limit
-        if (p->sample_counter > p->reset_limit) {
-            p->sample_counter   = 0;
-            p->start_c          = 0;
-            p->pulse_start      = 0;
-
-            if (p->callback)
-                events+=p->callback(p->bits_buffer, p->bits_per_row);
-            else
-                demod_print_bits_packet(p);
-
-            demod_reset_bits_packet(p);
         }
     }
 }
@@ -924,6 +692,7 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx) {
         if (demod->analyze) {
             pwm_analyze(demod, demod->f_buf, len / 2);
         } else {
+            // Loop through all demodulators for all samples (CPU intensive!)
             for (i = 0; i < demod->r_dev_num; i++) {
                 switch (demod->r_devs[i]->modulation) {
                     case OOK_PWM_D:
@@ -932,15 +701,47 @@ static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx) {
                     case OOK_PWM_P:
                         pwm_p_decode(demod, demod->r_devs[i], demod->f_buf, len / 2);
                         break;
-                    case OOK_MANCHESTER:
-                        manchester_decode(demod, demod->r_devs[i], demod->f_buf, len/2);
-                        break;
-                    case OOK_PWM_RAW:
-                        pwm_raw_decode(demod, demod->r_devs[i], demod->f_buf, len / 2);
+                    // Add pulse demodulators here
+                    case OOK_PULSE_PCM_RZ:
+                    case OOK_PULSE_PPM_RAW:
+                    case OOK_PULSE_PWM_RAW:
+                    case OOK_PULSE_PWM_TERNARY:
+                    case OOK_PULSE_MANCHESTER_ZEROBIT:
                         break;
                     default:
                         fprintf(stderr, "Unknown modulation %d in protocol!\n", demod->r_devs[i]->modulation);
                 }
+            }
+            // Detect a package and loop through demodulators with pulse data
+            while(detect_pulse_package(demod->f_buf, len/2, demod->level_limit, samp_rate, &demod->pulse_data)) {
+                for (i = 0; i < demod->r_dev_num; i++) {
+                    switch (demod->r_devs[i]->modulation) {
+                        // Old style decoders
+                        case OOK_PWM_D:
+                        case OOK_PWM_P:
+                            break;
+                        case OOK_PULSE_PCM_RZ:
+                            pulse_demod_pcm_rz(&demod->pulse_data, demod->r_devs[i]);
+                            break;
+                        case OOK_PULSE_PPM_RAW:
+                            pulse_demod_ppm(&demod->pulse_data, demod->r_devs[i]);
+                            break;
+                        case OOK_PULSE_PWM_RAW:
+                            pulse_demod_pwm(&demod->pulse_data, demod->r_devs[i]);
+                            break;
+                        case OOK_PULSE_PWM_TERNARY:
+                            pulse_demod_pwm_ternary(&demod->pulse_data, demod->r_devs[i]);
+                            break;
+                        case OOK_PULSE_MANCHESTER_ZEROBIT:
+                            pulse_demod_manchester_zerobit(&demod->pulse_data, demod->r_devs[i]);
+                            break;
+                        default:
+                            fprintf(stderr, "Unknown modulation %d in protocol!\n", demod->r_devs[i]->modulation);
+                    }
+                } // for demodulators
+                if(debug_output > 1) pulse_data_print(&demod->pulse_data);
+                if(debug_output) pulse_analyzer(&demod->pulse_data);
+                pulse_data_clear(&demod->pulse_data);
             }
         }
 
@@ -989,6 +790,9 @@ int main(int argc, char **argv) {
     int have_opt_R = 0;
     int udp_port = 0;
     char udp_addr[256] = { '\0' };
+
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
 
     demod = malloc(sizeof (struct dm_state));
     memset(demod, 0, sizeof (struct dm_state));
@@ -1055,7 +859,7 @@ int main(int argc, char **argv) {
                 sync_mode = 1;
                 break;
             case 'D':
-                debug_output = 1;
+                debug_output++;
                 break;
             case 'z':
                 override_short = atoi(optarg);
@@ -1116,76 +920,78 @@ int main(int argc, char **argv) {
 
     buffer = malloc(out_block_size * sizeof (uint8_t));
 
-    device_count = rtlsdr_get_device_count();
-    if (!device_count) {
-        fprintf(stderr, "No supported devices found.\n");
-        if (!test_mode_file)
-            exit(1);
-    }
+    if (!test_mode_file) {
+	device_count = rtlsdr_get_device_count();
+	if (!device_count) {
+	    fprintf(stderr, "No supported devices found.\n");
+	    if (!test_mode_file)
+		exit(1);
+	}
 
     if(udp_port > 0 && strlen(udp_addr) > 0) {
         udp_init_socket(udp_addr, udp_port);
     }
     
-    fprintf(stderr, "Found %d device(s):\n", device_count);
-    for (i = 0; i < device_count; i++) {
-        rtlsdr_get_device_usb_strings(i, vendor, product, serial);
-        fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
-    }
-    fprintf(stderr, "\n");
+	fprintf(stderr, "Found %d device(s):\n", device_count);
+	for (i = 0; i < device_count; i++) {
+	    rtlsdr_get_device_usb_strings(i, vendor, product, serial);
+	    fprintf(stderr, "  %d:  %s, %s, SN: %s\n", i, vendor, product, serial);
+	}
+	fprintf(stderr, "\n");
 
-    fprintf(stderr, "Using device %d: %s\n",
-            dev_index, rtlsdr_get_device_name(dev_index));
+	fprintf(stderr, "Using device %d: %s\n",
+		dev_index, rtlsdr_get_device_name(dev_index));
 
-    r = rtlsdr_open(&dev, dev_index);
-    if (r < 0) {
-        fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
-        if (!test_mode_file)
-            exit(1);
-    }
+	r = rtlsdr_open(&dev, dev_index);
+	if (r < 0) {
+	    fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
+	    exit(1);
+	}
 #ifndef _WIN32
-    sigact.sa_handler = sighandler;
-    sigemptyset(&sigact.sa_mask);
-    sigact.sa_flags = 0;
-    sigaction(SIGINT, &sigact, NULL);
-    sigaction(SIGTERM, &sigact, NULL);
-    sigaction(SIGQUIT, &sigact, NULL);
-    sigaction(SIGPIPE, &sigact, NULL);
+	sigact.sa_handler = sighandler;
+	sigemptyset(&sigact.sa_mask);
+	sigact.sa_flags = 0;
+	sigaction(SIGINT, &sigact, NULL);
+	sigaction(SIGTERM, &sigact, NULL);
+	sigaction(SIGQUIT, &sigact, NULL);
+	sigaction(SIGPIPE, &sigact, NULL);
 #else
-    SetConsoleCtrlHandler((PHANDLER_ROUTINE) sighandler, TRUE);
+	SetConsoleCtrlHandler((PHANDLER_ROUTINE) sighandler, TRUE);
 #endif
-    /* Set the sample rate */
-    r = rtlsdr_set_sample_rate(dev, samp_rate);
-    if (r < 0)
-        fprintf(stderr, "WARNING: Failed to set sample rate.\n");
-    else
-        fprintf(stderr, "Sample rate set to %d.\n", rtlsdr_get_sample_rate(dev)); // Unfortunately, doesn't return real rate
+	/* Set the sample rate */
+	r = rtlsdr_set_sample_rate(dev, samp_rate);
+	if (r < 0)
+	    fprintf(stderr, "WARNING: Failed to set sample rate.\n");
+	else
+	    fprintf(stderr, "Sample rate set to %d.\n", rtlsdr_get_sample_rate(dev)); // Unfortunately, doesn't return real rate
 
-    fprintf(stderr, "Sample rate decimation set to %d. %d->%d\n", demod->decimation_level, samp_rate, samp_rate >> demod->decimation_level);
-    fprintf(stderr, "Bit detection level set to %d.\n", demod->level_limit);
+	fprintf(stderr, "Sample rate decimation set to %d. %d->%d\n", demod->decimation_level, samp_rate, samp_rate >> demod->decimation_level);
+	fprintf(stderr, "Bit detection level set to %d.\n", demod->level_limit);
 
-    if (0 == gain) {
-        /* Enable automatic gain */
-        r = rtlsdr_set_tuner_gain_mode(dev, 0);
-        if (r < 0)
-            fprintf(stderr, "WARNING: Failed to enable automatic gain.\n");
-        else
-            fprintf(stderr, "Tuner gain set to Auto.\n");
-    } else {
-        /* Enable manual gain */
-        r = rtlsdr_set_tuner_gain_mode(dev, 1);
-        if (r < 0)
-            fprintf(stderr, "WARNING: Failed to enable manual gain.\n");
+	if (0 == gain) {
+	    /* Enable automatic gain */
+	    r = rtlsdr_set_tuner_gain_mode(dev, 0);
+	    if (r < 0)
+		fprintf(stderr, "WARNING: Failed to enable automatic gain.\n");
+	    else
+		fprintf(stderr, "Tuner gain set to Auto.\n");
+	} else {
+	    /* Enable manual gain */
+	    r = rtlsdr_set_tuner_gain_mode(dev, 1);
+	    if (r < 0)
+		fprintf(stderr, "WARNING: Failed to enable manual gain.\n");
 
-        /* Set the tuner gain */
-        r = rtlsdr_set_tuner_gain(dev, gain);
-        if (r < 0)
-            fprintf(stderr, "WARNING: Failed to set tuner gain.\n");
-        else
-            fprintf(stderr, "Tuner gain set to %f dB.\n", gain / 10.0);
+	    /* Set the tuner gain */
+	    r = rtlsdr_set_tuner_gain(dev, gain);
+	    if (r < 0)
+		fprintf(stderr, "WARNING: Failed to set tuner gain.\n");
+	    else
+		fprintf(stderr, "Tuner gain set to %f dB.\n", gain / 10.0);
+	}
+
+	r = rtlsdr_set_freq_correction(dev, ppm_error);
+
     }
-
-    r = rtlsdr_set_freq_correction(dev, ppm_error);
 
     demod->save_data = 1;
     if (!filename) {
@@ -1219,6 +1025,11 @@ int main(int argc, char **argv) {
             rtlsdr_callback(test_mode_buf, 131072, demod);
             i++;
         }
+
+        // Call a last time with cleared samples to ensure EOP detection
+        memset(test_mode_buf, 128, DEFAULT_BUF_LENGTH);     // 128 is 0 in unsigned data
+        rtlsdr_callback(test_mode_buf, 131072, demod);      // Why the magic value 131072?
+
         //Always classify a signal at the end of the file
         classify_signal();
         fprintf(stderr, "Test mode file issued %d packets\n", i);
