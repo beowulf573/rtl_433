@@ -1,5 +1,5 @@
 #include "rtl_433.h"
-#include "rtl_udp.h"
+#include "rtl_spool.h"
 
 // ** Acurite 5n1 functions **
 
@@ -79,7 +79,7 @@ int acurite5n1_callback(bitbuffer_t *bitbuffer) {
 	bitrow_t *bb = bitbuffer->bb;
     int i;
     uint8_t *buf = NULL;
-    struct rtl_udp_data udp_data;
+    struct rtl_spool_data spool_data;
 
     // run through rows til we find one with good crc (brute force)
     for (i=0; i < BITBUF_ROWS; i++) {
@@ -89,7 +89,7 @@ int acurite5n1_callback(bitbuffer_t *bitbuffer) {
         }
     }
     
-    udp_data.fields = 0x00;
+    spool_data.fields = 0x00;
 
     if (buf) {
         // decode packet here
@@ -120,10 +120,11 @@ int acurite5n1_callback(bitbuffer_t *bitbuffer) {
             fprintf(stdout, "rain gauge: %0.2f in.\n", rainfall);
 
 
-            udp_data.fields = RTL_UDP_WIND_SPEED | RTL_UDP_WIND_DIR | RTL_UDP_RAIN;
-            udp_data.wind_speed = wind_speed;
-            udp_data.wind_direction = wind_direction;
-            udp_data.rainfall_counter = raincounter;
+            spool_data.fields = RTL_SPOOL_WIND_SPEED | RTL_SPOOL_WIND_DIR | RTL_SPOOL_RAIN;
+            spool_data.wind_speed = wind_speed;
+            spool_data.wind_direction = wind_direction;
+            spool_data.rainfall_counter = raincounter;
+	    spool_data.r_index = 1;
 
         } else if ((buf[2] & 0x0F) == 8) {
             // wind speed, temp, RH
@@ -134,14 +135,15 @@ int acurite5n1_callback(bitbuffer_t *bitbuffer) {
             int humidity = acurite_getHumidity(buf[6]);
             fprintf(stdout, "humidity: %d%% RH\n", humidity);
 
-            udp_data.fields = RTL_UDP_WIND_SPEED | RTL_UDP_TEMP | RTL_UDP_HUMIDITY;
-            udp_data.wind_speed = wind_speed;
-            udp_data.temperature = temperature;
-            udp_data.humidity = humidity;
+            spool_data.fields = RTL_SPOOL_WIND_SPEED | RTL_SPOOL_TEMP | RTL_SPOOL_HUMIDITY;
+            spool_data.wind_speed = wind_speed;
+            spool_data.temperature = temperature;
+            spool_data.humidity = humidity;
+	    spool_data.r_index = 2;
         }
 
-        if(udp_data.fields != 0x00) {
-            udp_callback(&udp_data);
+        if(spool_data.fields != 0x00) {
+            spool_callback(&spool_data);
         }
     } else {
     	return 0;

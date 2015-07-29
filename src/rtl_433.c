@@ -22,7 +22,7 @@
 
 #include "rtl-sdr.h"
 #include "rtl_433.h"
-#include "rtl_udp.h"
+#include "rtl_spool.h"
 #include "pulse_detect.h"
 #include "pulse_demod.h"
 
@@ -104,6 +104,7 @@ sighandler(int signum) {
     if (CTRL_C_EVENT == signum) {
         fprintf(stderr, "Signal caught, exiting!\n");
         do_exit = 1;
+	spool_shutdown();
         rtlsdr_cancel_async(dev);
         return TRUE;
     }
@@ -788,8 +789,7 @@ int main(int argc, char **argv) {
     int device_count;
     char vendor[256], product[256], serial[256];
     int have_opt_R = 0;
-    int udp_port = 0;
-    char udp_addr[256] = { '\0' };
+    char *spool_dir = NULL;
 
     setbuf(stdout, NULL);
     setbuf(stderr, NULL);
@@ -813,7 +813,7 @@ int main(int argc, char **argv) {
     demod->level_limit = DEFAULT_LEVEL_LIMIT;
 
 
-    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:u:A:")) != -1) {
+    while ((opt = getopt(argc, argv, "x:z:p:Dtam:r:c:l:d:f:g:s:b:n:SR:A:")) != -1) {
         switch (opt) {
             case 'd':
                 dev_index = atoi(optarg);
@@ -884,10 +884,7 @@ int main(int argc, char **argv) {
                 devices[i - 1].disabled = 0;
                 break;
             case 'A':
-                strncpy(udp_addr, optarg, 256);
-                break;
-            case 'u':
-                udp_port = atoi(optarg);
+	      spool_dir = optarg;
                 break;
             default:
                 usage(devices);
@@ -927,10 +924,6 @@ int main(int argc, char **argv) {
 	    if (!test_mode_file)
 		exit(1);
 	}
-
-    if(udp_port > 0 && strlen(udp_addr) > 0) {
-        udp_init_socket(udp_addr, udp_port);
-    }
     
 	fprintf(stderr, "Found %d device(s):\n", device_count);
 	for (i = 0; i < device_count; i++) {
@@ -958,6 +951,9 @@ int main(int argc, char **argv) {
 #else
 	SetConsoleCtrlHandler((PHANDLER_ROUTINE) sighandler, TRUE);
 #endif
+
+	spool_init(spool_dir);
+
 	/* Set the sample rate */
 	r = rtlsdr_set_sample_rate(dev, samp_rate);
 	if (r < 0)
@@ -1113,7 +1109,7 @@ int main(int argc, char **argv) {
 
     rtlsdr_close(dev);
     free(buffer);
-    udp_destroy_socket();
+    spool_shutdown();
 out:
     return r >= 0 ? r : -r;
 }
